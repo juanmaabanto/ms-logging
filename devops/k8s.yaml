@@ -1,0 +1,117 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ms-logging
+  namespace: backend
+  labels:
+    app: ms-logging
+spec:
+  ports:
+  - port: 80
+  selector:
+    app: ms-logging
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ms-logging
+  namespace: backend
+  labels:
+    app: ms-logging
+spec:
+  selector:
+    matchLabels:
+      app: ms-logging
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: ms-logging
+    spec:
+      volumes:
+      - name: db-data
+        emptyDir: {}
+
+      containers:
+      - name: ms-logging
+        image: us-central1-docker.pkg.dev/sofisoft-lab/enterprise/ms-logging:latest
+        imagePullPolicy: Always
+        env:
+          - name: ASPNETCORE_ENVIRONMENT
+            value: Production
+          - name: Certificate__Content
+            valueFrom:
+              configMapKeyRef:
+                name: backend-config
+                key: CERTIFICATE_BASE64
+          - name: Certificate__Password
+            valueFrom:
+              configMapKeyRef:
+                name: backend-config
+                key: CERTIFICATE_PASSWORD
+          - name: ConnectionString
+            valueFrom:
+              secretKeyRef:
+                name: ms-logging
+                key: MONGODB_URL
+          - name: Swagger__EndPoint
+            value: "/logging/swagger/v1/swagger.json"
+        livenessProbe:
+          httpGet:
+            path: /index.html
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /index.html
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: db-data
+          mountPath: /var/lib/dataprotected
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: logging
+  namespace: backend
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  tls:
+  - hosts:
+    - services.sofisoft.pe
+    secretName: services-tls
+  rules:
+  - host: services.sofisoft.pe
+    http:
+      paths:
+      - path: /logging(/|$)(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: ms-logging
+            port:
+              number: 80
+# ---
+# apiVersion: autoscaling/v1
+# kind: HorizontalPodAutoscaler
+# metadata:
+#   name: ms-logging
+#   namespace: backend
+# spec:
+#   scaleTargetRef:
+#     apiVersion: apps/v1
+#     kind: Deployment
+#     name: ms-logging
+#   minReplicas: 1
+#   maxReplicas: 4
+#   targetCPUUtilizationPercentage: 80
